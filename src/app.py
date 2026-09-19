@@ -5,32 +5,32 @@ import numpy as np
 WIDTH, HEIGHT = 600, 400
 ORIGIN_X, ORIGIN_Y = WIDTH // 2, HEIGHT // 2
 SCALE = 40  # pixels per 1 graph unit
+NUM_CONTROL_POINTS = 12
+DOT_RADIUS = 5
 
-raw_points = []       # pixel coordinates as drawn
-graph_points = []     # converted (x, y) in graph units
+raw_points = []        # pixel coords while actively drawing
+control_points = []    # list of dicts: {"canvas_id", "px", "py"}
 drawing = False
+mode = "draw"          # "draw" or "edit"
+dragging_index = None
 
 def pixel_to_graph(px, py):
     x = (px - ORIGIN_X) / SCALE
-    y = (ORIGIN_Y - py) / SCALE   # flip y so up is positive
+    y = (ORIGIN_Y - py) / SCALE
     return x, y
 
 def draw_grid():
     canvas.delete("grid")
-    # vertical lines
     x = ORIGIN_X % SCALE
     while x < WIDTH:
         canvas.create_line(x, 0, x, HEIGHT, fill="#e0e0e0", tags="grid")
         x += SCALE
-    # horizontal lines
     y = ORIGIN_Y % SCALE
     while y < HEIGHT:
         canvas.create_line(0, y, WIDTH, y, fill="#e0e0e0", tags="grid")
         y += SCALE
-    # axes
     canvas.create_line(0, ORIGIN_Y, WIDTH, ORIGIN_Y, fill="black", width=2, tags="grid")
     canvas.create_line(ORIGIN_X, 0, ORIGIN_X, HEIGHT, fill="black", width=2, tags="grid")
-    # number labels on axes
     for i in range(-ORIGIN_X // SCALE, (WIDTH - ORIGIN_X) // SCALE + 1):
         if i == 0:
             continue
@@ -41,24 +41,23 @@ def draw_grid():
             continue
         py = ORIGIN_Y - i * SCALE
         canvas.create_text(ORIGIN_X - 12, py, text=str(i), font=("Arial", 8), tags="grid")
-    canvas.tag_lower("grid")  # keep grid behind drawn points/curve
+    canvas.tag_lower("grid")
 
+# --- Drawing mode ---
 def start_draw(event):
-    global drawing, raw_points, graph_points
+    global drawing
+    if mode != "draw":
+        return
     drawing = True
-    raw_points = []
-    graph_points = []
+    raw_points.clear()
     canvas.delete("stroke")
-    canvas.delete("curve")
-    result_label.config(text="")
     add_point(event)
 
 def add_point(event):
-    if not drawing:
+    if not drawing or mode != "draw":
         return
     x, y = event.x, event.y
     raw_points.append((x, y))
-    graph_points.append(pixel_to_graph(x, y))
     if len(raw_points) > 1:
         x0, y0 = raw_points[-2]
         canvas.create_line(x0, y0, x, y, fill="blue", width=2, tags="stroke")
@@ -67,19 +66,66 @@ def stop_draw(event):
     global drawing
     drawing = False
 
-def fit_curve():
-    if len(graph_points) < 2:
+# --- Finish drawing -> generate editable control points ---
+def finish_drawing():
+    global mode, control_points
+    if len(raw_points) < 2:
         result_label.config(text="Draw a line first")
         return
 
+    mode = "edit"
+
+    # fade the original stroke instead of deleting it
+    canvas.itemconfig("stroke", fill="#c9c9f5")
+
+    indices = np.linspace(0, len(raw_points) - 1, NUM_CONTROL_POINTS).astype(int)
+    sampled = [raw_points[i] for i in indices]
+
+    control_points = []
+    for (px, py) in sampled:
+        dot_id = canvas.create_oval(
+            px - DOT_RADIUS, py - DOT_RADIUS, px + DOT_RADIUS, py + DOT_RADIUS,
+            fill="orange", outline="black", width=1, tags="control"
+        )
+        control_points.append({"id": dot_id, "px": px, "py": py})
+
+    canvas.tag_raise("control")  # make sure dots stay clickable/on top
+    result_label.config(text=f"{len(control_points)} points ready — drag to adjust, then Fit")
+
+def on_dot_press(event):
+    global dragging_index
+    if mode != "edit":
+        return
+    clicked = canvas.find_closest(event.x, event.y)
+    for i, cp in enumerate(control_points):
+        if cp["id"] == clicked[0]:
+            dragging_index = i
+            return
+
+def on_dot_drag(event):
+    if mode != "edit" or dragging_index is None:
+        return
+    cp = control_points[dragging_index]
+    cp["px"], cp["py"] = event.x, event.y
+    canvas.coords(cp["id"], event.x - DOT_RADIUS, event.y - DOT_RADIUS,
+                             event.x + DOT_RADIUS, event.y + DOT_RADIUS)
+
+def on_dot_release(event):
+    global dragging_index
+    dragging_index = None
+
+# --- Fit using current control point positions ---
+def fit_curve():
+    if mode != "edit" or len(control_points) < 2:
+        result_label.config(text="Finish drawing first, then Fit")
+        return
+
     degree = int(degree_var.get())
+    graph_pts = [pixel_to_graph(cp["px"], cp["py"]) for cp in control_points]
+    xs = np.array([p[0] for p in graph_pts])
+    ys = np.array([p[1] for p in graph_pts])
 
-    # thin out points so polyfit isn't overwhelmed by thousands of near-duplicate drag points
-    sampled = graph_points[::max(1, len(graph_points) // 100)]
-    xs = np.array([p[0] for p in sampled])
-    ys = np.array([p[1] for p in sampled])
-
-    if degree >= len(sampled):
+    if degree >= len(control_points):
         result_label.config(text=f"Need more points for degree {degree}")
         return
 
@@ -99,8 +145,8 @@ def fit_curve():
     equation = "y = " + " + ".join(terms)
     result_label.config(text=equation)
 
-    # draw fitted curve back in pixel space
     canvas.delete("curve")
+    canvas.tag_raise("control")
     poly = np.poly1d(coeffs)
     x_graph_range = np.linspace(min(xs), max(xs), 200)
     y_graph_range = poly(x_graph_range)
@@ -113,11 +159,13 @@ def fit_curve():
         prev = (px, py)
 
 def clear_canvas():
-    global raw_points, graph_points
+    global mode, control_points, raw_points
+    mode = "draw"
+    control_points = []
     raw_points = []
-    graph_points = []
     canvas.delete("stroke")
     canvas.delete("curve")
+    canvas.delete("control")
     result_label.config(text="")
 
 root = tk.Tk()
@@ -131,13 +179,20 @@ canvas.bind("<Button-1>", start_draw)
 canvas.bind("<B1-Motion>", add_point)
 canvas.bind("<ButtonRelease-1>", stop_draw)
 
+canvas.tag_bind("control", "<Button-1>", on_dot_press)
+canvas.tag_bind("control", "<B1-Motion>", on_dot_drag)
+canvas.tag_bind("control", "<ButtonRelease-1>", on_dot_release)
+
 controls = tk.Frame(root)
 controls.pack(pady=10)
 
 tk.Label(controls, text="Degree:").pack(side=tk.LEFT)
-degree_var = tk.StringVar(value="1")
+degree_var = tk.StringVar(value="2")
 degree_menu = tk.OptionMenu(controls, degree_var, "1", "2", "3", "4", "5")
 degree_menu.pack(side=tk.LEFT, padx=5)
+
+finish_button = tk.Button(controls, text="Finish Drawing", command=finish_drawing)
+finish_button.pack(side=tk.LEFT, padx=5)
 
 fit_button = tk.Button(controls, text="Fit", command=fit_curve)
 fit_button.pack(side=tk.LEFT, padx=5)
