@@ -1,14 +1,28 @@
 # Reverse Desmos
 
 A tool that flips the usual Desmos workflow: instead of typing a function to see its graph,
-you draw points/a curve, pick a polynomial degree, and the app finds a function that fits it.
+you draw a curve freehand, adjust the key points, and the app finds a polynomial function
+that fits it.
 
 ## Features
 
-- Click on a canvas to place points
-- Choose a polynomial degree (1–5)
-- Fit a curve to your points using least-squares regression (`numpy.polyfit`)
-- View the resulting equation and see it overlaid on your points
+- **Freehand drawing** on a coordinate grid with labeled x/y axes
+- **Editable control points** — after finishing your drawing, ~12 points are placed along
+  your stroke as draggable dots, so you can fine-tune the shape before fitting (rather than
+  the app just guessing off your raw hand-drawn line)
+- Choose a polynomial degree (1–5) to fit
+- Fit a curve to your control points using least-squares regression (`numpy.polyfit`)
+- View the resulting equation, with the fitted curve drawn in red over your (faded) original
+  stroke
+
+## How it works
+
+1. Click and drag on the canvas to draw a curve
+2. Click **Finish Drawing** — your stroke fades, and draggable orange control points appear
+   along it
+3. Drag any point to adjust it
+4. Pick a degree and click **Fit** — the equation appears below the canvas
+5. Click **Clear** to start over
 
 ## Setup
 
@@ -28,4 +42,8 @@ python src/app.py
 
 ## Status
 
-Early prototype — currently a desktop app (tkinter). Planned: web version, freehand curve drawing (not just points).
+Working prototype (desktop app, tkinter). Planned:
+
+- Adjustable number of control points (currently fixed at 12)
+- Zoom/pan on the grid
+- Web version
