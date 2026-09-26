@@ -6,6 +6,7 @@ WIDTH, HEIGHT = 600, 400
 ORIGIN_X, ORIGIN_Y = WIDTH // 2, HEIGHT // 2
 SCALE = 40
 DOT_RADIUS = 5
+SNAP_STEP = 0.25  # graph units
 
 # App state
 raw_points = []
@@ -19,6 +20,24 @@ def pixel_to_graph(px, py):
     x = (px - ORIGIN_X) / SCALE
     y = (ORIGIN_Y - py) / SCALE
     return x, y
+
+
+# Round a pixel position to the nearest SNAP_STEP on the graph
+def snap(px, py):
+    if not snap_var.get():
+        return px, py
+    step = SCALE * SNAP_STEP
+    px = ORIGIN_X + round((px - ORIGIN_X) / step) * step
+    py = ORIGIN_Y + round((py - ORIGIN_Y) / step) * step
+    return px, py
+
+
+# 2 decimals, no trailing zeros (1.50 -> 1.5, 2.00 -> 2)
+def format_coeff(c):
+    text = f"{c:.2f}".rstrip("0").rstrip(".")
+    if text == "-0":
+        text = "0"
+    return text
 
 
 def draw_grid():
@@ -94,6 +113,7 @@ def finish_drawing():
 
     control_points = []
     for (px, py) in sampled:
+        px, py = snap(px, py)
         dot_id = canvas.create_oval(
             px - DOT_RADIUS, py - DOT_RADIUS, px + DOT_RADIUS, py + DOT_RADIUS,
             fill="orange", outline="black", width=1, tags="control"
@@ -120,9 +140,10 @@ def on_dot_drag(event):
     if mode != "edit" or dragging_index is None:
         return
     cp = control_points[dragging_index]
-    cp["px"], cp["py"] = event.x, event.y
-    canvas.coords(cp["id"], event.x - DOT_RADIUS, event.y - DOT_RADIUS,
-                             event.x + DOT_RADIUS, event.y + DOT_RADIUS)
+    px, py = snap(event.x, event.y)
+    cp["px"], cp["py"] = px, py
+    canvas.coords(cp["id"], px - DOT_RADIUS, py - DOT_RADIUS,
+                             px + DOT_RADIUS, py + DOT_RADIUS)
 
 
 def on_dot_release(event):
@@ -151,7 +172,7 @@ def fit_curve():
     n = len(coeffs)
     for i, c in enumerate(coeffs):
         power = n - i - 1
-        c_rounded = round(c, 3)
+        c_rounded = format_coeff(c)
         if power == 0:
             terms.append(f"{c_rounded}")
         elif power == 1:
@@ -215,6 +236,10 @@ tk.Label(controls, text="Points:").pack(side=tk.LEFT, padx=(10, 0))
 points_var = tk.IntVar(value=12)
 points_slider = tk.Scale(controls, from_=4, to=30, orient=tk.HORIZONTAL, variable=points_var, length=100)
 points_slider.pack(side=tk.LEFT, padx=5)
+
+snap_var = tk.BooleanVar(value=True)
+snap_check = tk.Checkbutton(controls, text="Snap", variable=snap_var)
+snap_check.pack(side=tk.LEFT, padx=5)
 
 finish_button = tk.Button(controls, text="Finish Drawing", command=finish_drawing)
 finish_button.pack(side=tk.LEFT, padx=5)
